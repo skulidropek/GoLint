@@ -41,8 +41,8 @@ type analyzerConfig struct {
 }
 
 type lintConfig struct {
-	Analyzers []analyzerConfig `json:"analyzers"`
-	PriorityLevels []priorityLevel `json:"priorityLevels"`
+	Analyzers      []analyzerConfig `json:"analyzers"`
+	PriorityLevels []priorityLevel  `json:"priorityLevels"`
 }
 
 type priorityLevel struct {
@@ -323,6 +323,7 @@ func main() {
 	}
 
 	priorityIndex := buildPriorityIndex(cfg.PriorityLevels)
+	rep.Issues = dedupeIssues(rep.Issues)
 	sortIssues(rep.Issues, priorityIndex)
 
 	totalErrors := 0
@@ -453,6 +454,69 @@ func priorityValue(is issue, priorities map[string]int) int {
 		return lvl
 	}
 	return math.MaxInt32
+}
+
+func dedupeIssues(list []issue) []issue {
+	type key struct {
+		file   string
+		line   int
+		column int
+		linter string
+	}
+
+	seen := make(map[key]issue)
+	order := make([]key, 0, len(list))
+
+	for _, is := range list {
+		canonical := canonicalPath(is.Pos.Filename)
+		k := key{
+			file:   canonical,
+			line:   is.Pos.Line,
+			column: is.Pos.Column,
+			linter: strings.ToLower(is.FromLinter),
+		}
+		if existing, ok := seen[k]; ok {
+			if preferIssue(existing, is) {
+				seen[k] = is
+			}
+		} else {
+			seen[k] = is
+			order = append(order, k)
+		}
+	}
+
+	result := make([]issue, 0, len(order))
+	for _, k := range order {
+		result = append(result, seen[k])
+	}
+	return result
+}
+
+func preferIssue(current, candidate issue) bool {
+	curRank := severityRank(current.Severity)
+	candRank := severityRank(candidate.Severity)
+	if candRank != curRank {
+		return candRank > curRank
+	}
+	curHint := strings.Contains(strings.ToLower(current.Text), "did you mean")
+	candHint := strings.Contains(strings.ToLower(candidate.Text), "did you mean")
+	if candHint != curHint {
+		return candHint
+	}
+	if len(candidate.Text) != len(current.Text) {
+		return len(candidate.Text) > len(current.Text)
+	}
+	return false
+}
+
+func canonicalPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return strings.ToLower(abs)
+	}
+	return strings.ToLower(filepath.Clean(p))
 }
 
 func severityRank(sev string) int {
