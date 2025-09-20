@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -32,7 +33,189 @@ type report struct {
 	Issues []issue `json:"Issues"`
 }
 
+type analyzerConfig struct {
+	Name     string   `json:"name"`
+	Command  []string `json:"command"`
+	Severity string   `json:"severity"`
+}
+
+type lintConfig struct {
+	Analyzers []analyzerConfig `json:"analyzers"`
+}
+
 const maxPrintedIssues = 15
+
+func runExtraAnalyzers(args []string) []issue {
+	configs := mergeAnalyzerConfigs(loadConfig())
+	if len(configs) == 0 {
+		return nil
+	}
+
+	targets := args
+	if len(targets) == 0 {
+		targets = []string{"./..."}
+	}
+
+	var collected []issue
+	for _, cfg := range configs {
+		if cfg.Name == "" {
+			continue
+		}
+		if len(cfg.Command) == 0 {
+			cfg.Command = []string{cfg.Name}
+		}
+		severity := normalizeSeverity(cfg.Severity)
+		for _, target := range targets {
+			cmdline := expandCommand(cfg.Command, target)
+			if len(cmdline) == 0 {
+				continue
+			}
+			out, err := exec.Command(cmdline[0], cmdline[1:]...).CombinedOutput()
+			if len(out) > 0 {
+				collected = append(collected, parseGoDiagnostics(out, cfg.Name, severity)...)
+			}
+			if err != nil && !isExitError(err) {
+				fmt.Fprintf(os.Stderr, "❌ %s failed: %v\n", cfg.Name, err)
+				if len(out) > 0 {
+					printSanitized(out)
+				}
+			}
+		}
+	}
+
+	return collected
+}
+
+func mergeAnalyzerConfigs(cfg lintConfig) []analyzerConfig {
+	merged := map[string]analyzerConfig{}
+	for _, auto := range detectAutoAnalyzers() {
+		merged[auto.Name] = auto
+	}
+	for _, user := range cfg.Analyzers {
+		if user.Name == "" {
+			continue
+		}
+		merged[user.Name] = user
+	}
+
+	result := make([]analyzerConfig, 0, len(merged))
+	for _, v := range merged {
+		result = append(result, v)
+	}
+
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
+}
+
+func loadConfig() lintConfig {
+	paths := []string{"go-lint.config.json", ".go-lint.config.json"}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "❌ could not read %s: %v\n", p, err)
+			continue
+		}
+		var cfg lintConfig
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ could not parse %s: %v\n", p, err)
+			continue
+		}
+		return cfg
+	}
+	return lintConfig{}
+}
+
+func detectAutoAnalyzers() []analyzerConfig {
+	var list []analyzerConfig
+	if commandExists("smbgo") {
+		list = append(list, analyzerConfig{
+			Name:     "smbgo",
+			Command:  []string{"smbgo", "{target}"},
+			Severity: "error",
+		})
+	}
+	return list
+}
+
+func commandExists(name string) bool {
+	if name == "" {
+		return false
+	}
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func expandCommand(parts []string, target string) []string {
+	if len(parts) == 0 {
+		return nil
+	}
+	expanded := make([]string, len(parts))
+	containsPlaceholder := false
+	for i, part := range parts {
+		replaced := strings.ReplaceAll(part, "{target}", target)
+		replaced = strings.ReplaceAll(replaced, "${target}", target)
+		expanded[i] = replaced
+		if replaced != part {
+			containsPlaceholder = true
+		}
+	}
+	if !containsPlaceholder && target != "" {
+		expanded = append(expanded, target)
+	}
+	return expanded
+}
+
+func normalizeSeverity(sev string) string {
+	switch strings.ToLower(sev) {
+	case "error":
+		return "error"
+	case "warn", "warning":
+		return "warning"
+	case "info", "information":
+		return "info"
+	case "":
+		return "error"
+	default:
+		return strings.ToLower(sev)
+	}
+}
+
+func parseGoDiagnostics(out []byte, linterName, severity string) []issue {
+	lines := strings.Split(string(out), "\n")
+	var items []issue
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		match := goDiagnosticPattern.FindStringSubmatch(line)
+		if len(match) != 5 {
+			continue
+		}
+		ln, err1 := strconv.Atoi(match[2])
+		col, err2 := strconv.Atoi(match[3])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		items = append(items, issue{
+			FromLinter: linterName,
+			Text:       match[4],
+			Severity:   severity,
+			Source:     linterName,
+			Pos: position{
+				Filename: match[1],
+				Line:     ln,
+				Column:   col,
+			},
+		})
+	}
+	return items
+}
+
+var goDiagnosticPattern = regexp.MustCompile(`^(.+?):(\d+):(\d+):\s*(.+)$`)
 
 func main() {
 	args := os.Args[1:]
@@ -73,6 +256,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	extraIssues := runExtraAnalyzers(args)
+	if len(extraIssues) > 0 {
+		rep.Issues = append(rep.Issues, extraIssues...)
+	}
+
 	if len(rep.Issues) == 0 {
 		fmt.Println("📊 Total: 0 errors, 0 warnings.")
 		return
@@ -94,11 +282,9 @@ func main() {
 		case "warning":
 			warningCount++
 		}
-	}
 
-	for _, is := range rep.Issues {
 		if printed >= maxPrintedIssues {
-			break
+			continue
 		}
 		printed++
 
@@ -106,7 +292,7 @@ func main() {
 		displayPath := is.Pos.Filename
 		absPath := resolvePath(displayPath, absCache)
 
-		fmt.Printf("\n%s %s:%d:%d @%s (golangci-lint) — %s\n", label, displayPath, is.Pos.Line, is.Pos.Column, is.FromLinter, strings.TrimSpace(is.Text))
+		fmt.Printf("\n%s %s:%d:%d @%s — %s\n", label, displayPath, is.Pos.Line, is.Pos.Column, is.FromLinter, strings.TrimSpace(is.Text))
 		printContext(absPath, is.Pos.Line, is.Pos.Column, cache)
 
 		if doc := ruleDocURL(is); doc != "" {
