@@ -62,8 +62,15 @@ func main() {
 	}
 
 	var rep report
-	if err := json.Unmarshal(bytes.TrimSpace(raw), &rep); err != nil {
+	jsonBytes, err := extractJSON(raw)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ could not parse golangci-lint JSON output: %v\n", err)
+		printSanitized(raw)
+		os.Exit(1)
+	}
+	if err := json.Unmarshal(jsonBytes, &rep); err != nil {
+		fmt.Fprintf(os.Stderr, "❌ could not decode golangci-lint JSON output: %v\n", err)
+		printSanitized(raw)
 		os.Exit(1)
 	}
 
@@ -318,4 +325,29 @@ func urlQuery(text string) string {
 		"'", "%27",
 	)
 	return replacer.Replace(text)
+}
+
+func extractJSON(raw []byte) ([]byte, error) {
+	trimmed := bytes.TrimSpace(raw)
+	start := bytes.IndexByte(trimmed, '{')
+	end := bytes.LastIndexByte(trimmed, '}')
+	if start == -1 || end == -1 || start > end {
+		return nil, fmt.Errorf("no JSON object in output")
+	}
+	candidate := trimmed[start : end+1]
+	if !bytes.Contains(candidate, []byte(`"Issues"`)) {
+		return nil, fmt.Errorf("unexpected payload before JSON")
+	}
+	return candidate, nil
+}
+
+func printSanitized(raw []byte) {
+	cleaned := bytes.TrimSpace(raw)
+	if len(cleaned) == 0 {
+		return
+	}
+	if len(cleaned) > 4096 {
+		cleaned = append(cleaned[:4093], '.', '.', '.')
+	}
+	fmt.Println(string(cleaned))
 }
