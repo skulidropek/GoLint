@@ -417,7 +417,7 @@ func runGoFmt(args []string) error {
 }
 
 func runLintJSON(args []string) ([]byte, error) {
-	cmdArgs := append([]string{"run", "--out-format", "json", "--show-stats", "false"}, args...)
+	cmdArgs := append([]string{"run", "--out-format", "json", "--show-stats=false"}, args...)
 	cmd := exec.Command("golangci-lint", cmdArgs...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
