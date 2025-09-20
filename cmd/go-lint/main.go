@@ -145,6 +145,13 @@ func detectAutoAnalyzers() []analyzerConfig {
 			Severity: "error",
 		})
 	}
+	if commandExists("analyze") {
+		list = append(list, analyzerConfig{
+			Name:     "analyze",
+			Command:  []string{"analyze", "{target}"},
+			Severity: "error",
+		})
+	}
 	return list
 }
 
@@ -470,7 +477,7 @@ func dedupeIssues(list []issue) []issue {
 		file   string
 		line   int
 		column int
-		linter string
+		text   string
 	}
 
 	seen := make(map[key]issue)
@@ -478,11 +485,12 @@ func dedupeIssues(list []issue) []issue {
 
 	for _, is := range list {
 		canonical := canonicalPath(is.Pos.Filename)
+		text := strings.TrimSpace(is.Text)
 		k := key{
 			file:   canonical,
 			line:   is.Pos.Line,
 			column: is.Pos.Column,
-			linter: strings.ToLower(is.FromLinter),
+			text:   text,
 		}
 		if existing, ok := seen[k]; ok {
 			if preferIssue(existing, is) {
