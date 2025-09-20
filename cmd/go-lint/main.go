@@ -519,6 +519,20 @@ func canonicalPath(p string) string {
 	return strings.ToLower(filepath.Clean(p))
 }
 
+func columnToByteIndex(line string, column int) int {
+	if column <= 0 {
+		return 0
+	}
+	count := 0
+	for idx := range line {
+		if count == column {
+			return idx
+		}
+		count++
+	}
+	return len(line)
+}
+
 func severityRank(sev string) int {
 	switch strings.ToLower(sev) {
 	case "error":
@@ -616,12 +630,24 @@ func highlight(prefix, line string, column int) {
 	if column < 1 {
 		column = 1
 	}
-	highlightCol := column - 1
-	if highlightCol > len(line) {
-		highlightCol = len(line)
+	byteIdx := columnToByteIndex(line, column-1)
+	if byteIdx > len(line) {
+		byteIdx = len(line)
 	}
-	caretLine := strings.Repeat(" ", len(prefix)+highlightCol) + "^"
-	fmt.Println(caretLine)
+	segment := line[:byteIdx]
+	var builder strings.Builder
+	builder.WriteString(strings.Repeat(" ", len(prefix)))
+	for _, r := range segment {
+		if r == '\t' {
+			builder.WriteRune('\t')
+		} else if r == '\r' {
+			continue
+		} else {
+			builder.WriteRune(' ')
+		}
+	}
+	builder.WriteString("^")
+	fmt.Println(builder.String())
 }
 
 func ruleDocURL(is issue) string {
