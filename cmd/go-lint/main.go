@@ -310,6 +310,7 @@ func main() {
 		printSanitized(raw)
 		os.Exit(1)
 	}
+	normalizeIssueSeverities(rep.Issues)
 
 	cfg := loadConfig()
 	extraIssues := runExtraAnalyzers(args, cfg)
@@ -454,6 +455,14 @@ func priorityValue(is issue, priorities map[string]int) int {
 		return lvl
 	}
 	return math.MaxInt32
+}
+
+func normalizeIssueSeverities(list []issue) {
+	for i := range list {
+		if strings.TrimSpace(list[i].Severity) == "" {
+			list[i].Severity = "error"
+		}
+	}
 }
 
 func dedupeIssues(list []issue) []issue {
