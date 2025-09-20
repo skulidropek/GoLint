@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,12 +42,19 @@ type analyzerConfig struct {
 
 type lintConfig struct {
 	Analyzers []analyzerConfig `json:"analyzers"`
+	PriorityLevels []priorityLevel `json:"priorityLevels"`
+}
+
+type priorityLevel struct {
+	Level int      `json:"level"`
+	Name  string   `json:"name"`
+	Rules []string `json:"rules"`
 }
 
 const maxPrintedIssues = 15
 
-func runExtraAnalyzers(args []string) []issue {
-	configs := mergeAnalyzerConfigs(loadConfig())
+func runExtraAnalyzers(args []string, cfg lintConfig) []issue {
+	configs := mergeAnalyzerConfigs(cfg)
 	if len(configs) == 0 {
 		return nil
 	}
@@ -138,6 +146,35 @@ func detectAutoAnalyzers() []analyzerConfig {
 		})
 	}
 	return list
+}
+
+func buildPriorityIndex(levels []priorityLevel) map[string]int {
+	index := make(map[string]int, len(levels))
+	for _, lvl := range levels {
+		if lvl.Level <= 0 {
+			continue
+		}
+		for _, rule := range lvl.Rules {
+			if rule == "" {
+				continue
+			}
+			index[strings.ToLower(rule)] = lvl.Level
+		}
+	}
+	return index
+}
+
+func filterByPriority(issues []issue, level int, priorities map[string]int) []issue {
+	if len(priorities) == 0 {
+		return nil
+	}
+	var filtered []issue
+	for _, is := range issues {
+		if priorityValue(is, priorities) == level {
+			filtered = append(filtered, is)
+		}
+	}
+	return filtered
 }
 
 func commandExists(name string) bool {
@@ -274,7 +311,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	extraIssues := runExtraAnalyzers(args)
+	cfg := loadConfig()
+	extraIssues := runExtraAnalyzers(args, cfg)
 	if len(extraIssues) > 0 {
 		rep.Issues = append(rep.Issues, extraIssues...)
 	}
@@ -284,23 +322,46 @@ func main() {
 		return
 	}
 
-	sortIssues(rep.Issues)
+	priorityIndex := buildPriorityIndex(cfg.PriorityLevels)
+	sortIssues(rep.Issues, priorityIndex)
+
+	totalErrors := 0
+	totalWarnings := 0
+	for _, is := range rep.Issues {
+		switch strings.ToLower(is.Severity) {
+		case "error":
+			totalErrors++
+		case "warning":
+			totalWarnings++
+		}
+	}
 
 	cache := map[string][]string{}
 	absCache := map[string]string{}
 
-	printed := 0
-	errorCount := 0
-	warningCount := 0
-
-	for _, is := range rep.Issues {
-		switch strings.ToLower(is.Severity) {
-		case "error":
-			errorCount++
-		case "warning":
-			warningCount++
+	levels := append([]priorityLevel(nil), cfg.PriorityLevels...)
+	sort.SliceStable(levels, func(i, j int) bool { return levels[i].Level < levels[j].Level })
+	issuesToPrint := rep.Issues
+	printedHeader := false
+	for _, lvl := range levels {
+		if lvl.Level <= 0 {
+			continue
 		}
+		group := filterByPriority(rep.Issues, lvl.Level, priorityIndex)
+		if len(group) == 0 {
+			continue
+		}
+		fmt.Printf("\n=== Level %d: %s (%d issues) ===\n", lvl.Level, lvl.Name, len(group))
+		issuesToPrint = group
+		printedHeader = true
+		break
+	}
+	if !printedHeader {
+		fmt.Printf("\n=== Issues (%d items) ===\n", len(issuesToPrint))
+	}
 
+	printed := 0
+	for _, is := range issuesToPrint {
 		if printed >= maxPrintedIssues {
 			continue
 		}
@@ -323,9 +384,9 @@ func main() {
 		fmt.Printf(" 🔍 gh: https://api.github.com/search/issues?q=%s+in:title\n", query)
 	}
 
-	fmt.Printf("\n📊 Total: %d errors, %d warnings.\n", errorCount, warningCount)
+	fmt.Printf("\n📊 Total: %d errors, %d warnings.\n", totalErrors, totalWarnings)
 
-	if errorCount > 0 {
+	if totalErrors > 0 {
 		os.Exit(1)
 	}
 }
@@ -361,12 +422,17 @@ func isExitError(err error) bool {
 	return errors.As(err, &exitErr)
 }
 
-func sortIssues(issues []issue) {
+func sortIssues(issues []issue, priorities map[string]int) {
 	sort.SliceStable(issues, func(i, j int) bool {
 		si := severityRank(issues[i].Severity)
 		sj := severityRank(issues[j].Severity)
 		if si != sj {
 			return si > sj
+		}
+		pi := priorityValue(issues[i], priorities)
+		pj := priorityValue(issues[j], priorities)
+		if pi != pj {
+			return pi < pj
 		}
 		if issues[i].Pos.Filename != issues[j].Pos.Filename {
 			return issues[i].Pos.Filename < issues[j].Pos.Filename
@@ -376,6 +442,17 @@ func sortIssues(issues []issue) {
 		}
 		return issues[i].Pos.Column < issues[j].Pos.Column
 	})
+}
+
+func priorityValue(is issue, priorities map[string]int) int {
+	if len(priorities) == 0 {
+		return math.MaxInt32
+	}
+	key := strings.ToLower(is.FromLinter)
+	if lvl, ok := priorities[key]; ok {
+		return lvl
+	}
+	return math.MaxInt32
 }
 
 func severityRank(sev string) int {
