@@ -42,23 +42,11 @@ func main() {
 	fmt.Printf("🔍 Linting target: %s\n", strings.Join(args, " "))
 
 	if err := runGoFmt(args); err != nil {
-		if isExitError(err) {
-			fmt.Println("✅ go fmt завершён с предупреждениями")
-		} else {
-			fmt.Fprintf(os.Stderr, "❌ go fmt завершился с ошибкой: %v\n", err)
-		}
-	} else {
-		fmt.Println("✅ go fmt завершён")
+		fmt.Fprintf(os.Stderr, "❌ go fmt завершился с ошибкой: %v\n", err)
 	}
 
 	if err := runFix(args); err != nil {
-		if isExitError(err) {
-			fmt.Println("✅ golangci-lint --fix completed with warnings")
-		} else {
-			fmt.Fprintf(os.Stderr, "❌ golangci-lint --fix failed: %v\n", err)
-		}
-	} else {
-		fmt.Println("✅ golangci-lint --fix completed")
+		fmt.Fprintf(os.Stderr, "❌ golangci-lint --fix failed: %v\n", err)
 	}
 
 	raw, runErr := runLintJSON(args)
@@ -140,17 +128,24 @@ func main() {
 func runFix(args []string) error {
 	cmdArgs := append([]string{"run", "--fix"}, args...)
 	cmd := exec.Command("golangci-lint", cmdArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	if err != nil {
+		printSanitized(buf.Bytes())
+	}
+	return err
 }
 
 func runGoFmt(args []string) error {
 	cmdArgs := append([]string{"fmt"}, args...)
 	cmd := exec.Command("go", cmdArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		printSanitized(out)
+	}
+	return err
 }
 
 func runLintJSON(args []string) ([]byte, error) {
