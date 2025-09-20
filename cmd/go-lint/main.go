@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,24 +129,17 @@ func main() {
 func runFix(args []string) error {
 	cmdArgs := append([]string{"run", "--fix"}, args...)
 	cmd := exec.Command("golangci-lint", cmdArgs...)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	err := cmd.Run()
-	if err != nil {
-		printSanitized(buf.Bytes())
-	}
-	return err
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
 }
 
 func runGoFmt(args []string) error {
 	cmdArgs := append([]string{"fmt"}, args...)
 	cmd := exec.Command("go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		printSanitized(out)
-	}
-	return err
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
 }
 
 func runLintJSON(args []string) ([]byte, error) {
