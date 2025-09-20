@@ -41,6 +41,16 @@ func main() {
 
 	fmt.Printf("🔍 Linting target: %s\n", strings.Join(args, " "))
 
+	if err := runGoFmt(args); err != nil {
+		if isExitError(err) {
+			fmt.Println("✅ go fmt завершён с предупреждениями")
+		} else {
+			fmt.Fprintf(os.Stderr, "❌ go fmt завершился с ошибкой: %v\n", err)
+		}
+	} else {
+		fmt.Println("✅ go fmt завершён")
+	}
+
 	if err := runFix(args); err != nil {
 		if isExitError(err) {
 			fmt.Println("✅ golangci-lint --fix completed with warnings")
@@ -130,6 +140,14 @@ func main() {
 func runFix(args []string) error {
 	cmdArgs := append([]string{"run", "--fix"}, args...)
 	cmd := exec.Command("golangci-lint", cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func runGoFmt(args []string) error {
+	cmdArgs := append([]string{"fmt"}, args...)
+	cmd := exec.Command("go", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
