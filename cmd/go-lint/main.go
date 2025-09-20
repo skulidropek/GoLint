@@ -184,10 +184,11 @@ func normalizeSeverity(sev string) string {
 }
 
 func parseGoDiagnostics(out []byte, linterName, severity string) []issue {
-	lines := strings.Split(string(out), "\n")
+	text := strings.ReplaceAll(string(out), "\r\n", "\n")
+	lines := strings.Split(text, "\n")
 	var items []issue
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
 		if line == "" {
 			continue
 		}
@@ -200,9 +201,25 @@ func parseGoDiagnostics(out []byte, linterName, severity string) []issue {
 		if err1 != nil || err2 != nil {
 			continue
 		}
+		messageLines := []string{strings.TrimSpace(match[4])}
+		nextIndex := i + 1
+		for nextIndex < len(lines) {
+			next := lines[nextIndex]
+			trimmed := strings.TrimSpace(next)
+			if trimmed == "" {
+				messageLines = append(messageLines, "")
+				nextIndex++
+				continue
+			}
+			if goDiagnosticPattern.MatchString(trimmed) {
+				break
+			}
+			messageLines = append(messageLines, strings.TrimRight(next, "\r"))
+			nextIndex++
+		}
 		items = append(items, issue{
 			FromLinter: linterName,
-			Text:       match[4],
+			Text:       strings.Join(messageLines, "\n"),
 			Severity:   severity,
 			Source:     linterName,
 			Pos: position{
@@ -211,6 +228,7 @@ func parseGoDiagnostics(out []byte, linterName, severity string) []issue {
 				Column:   col,
 			},
 		})
+		i = nextIndex - 1
 	}
 	return items
 }
