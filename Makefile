@@ -5,7 +5,7 @@ TARGET ?= ./...
 .PHONY: build lint vet vuln check fmt clean
 
 build: $(BIN_DIR)
-	GOCACHE=$(PWD)/.gocache go build -o $(LINT_BIN) ./cmd/lint
+	GOCACHE=$(PWD)/.gocache go build -o $(LINT_BIN) ./cmd/go-lint
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
