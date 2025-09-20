@@ -382,8 +382,8 @@ func main() {
 
 		query := searchKey(is)
 		fmt.Println(" 💡 Search for similar fixes")
-		fmt.Printf(" 🔍 so: https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=%s&site=stackoverflow&pagesize=5\n", query)
-		fmt.Printf(" 🔍 gh: https://api.github.com/search/issues?q=%s+in:title\n", query)
+		fmt.Printf(" 🔍 so: curl -s 'https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=%s&site=stackoverflow&pagesize=5'\n", query)
+		fmt.Printf(" 🔍 gh: curl -s 'https://api.github.com/search/issues?q=%s+in:title'\n", query)
 	}
 
 	fmt.Printf("\n📊 Total: %d errors, %d warnings.\n", totalErrors, totalWarnings)
